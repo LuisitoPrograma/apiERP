@@ -14,6 +14,7 @@ class apiERP {
         'ws_createImg' => "https://luisitoprograma.com/api/img/",
         'ws_createCompany' => "https://luisitoprograma.com/api/company/create/",
         'ws_createProduct' => "https://luisitoprograma.com/api/product/create/",
+        'ws_createClient' => "https://luisitoprograma.com/api/client/create/",
         'ws_generarPdf' => "https://luisitoprograma.com/api/pdf/create/",
         'ws_generarInvoice' => "https://luisitoprograma.com/api/invoice/peru/create/"
     ];
