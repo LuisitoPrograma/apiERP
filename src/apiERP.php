@@ -12,6 +12,7 @@ class apiERP {
     private static $webservices = [
         'ws_getCalculos' => "https://luisitoprograma.com/api/invoice/peru/calc/",
         'ws_createImg' => "https://luisitoprograma.com/api/img/",
+        'ws_createCompany' => "https://luisitoprograma.com/api/company/create/",
         'ws_generarPdf' => "https://luisitoprograma.com/api/pdf/create/",
         'ws_generarInvoice' => "https://luisitoprograma.com/api/invoice/peru/create/"
     ];
