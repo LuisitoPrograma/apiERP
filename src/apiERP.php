@@ -10,13 +10,13 @@ class apiERP {
     
     //WEBSERVICES URL
     private static $webservices = [
-        'ws_getCalculos' => "https://luisitoprograma.com/api/invoice/peru/calc/",
-        'ws_createImg' => "https://luisitoprograma.com/api/img/",
-        'ws_createCompany' => "https://luisitoprograma.com/api/company/create/",
-        'ws_createProduct' => "https://luisitoprograma.com/api/product/create/",
-        'ws_createClient' => "https://luisitoprograma.com/api/client/create/",
-        'ws_generarPdf' => "https://luisitoprograma.com/api/pdf/create/",
-        'ws_generarInvoice' => "https://luisitoprograma.com/api/invoice/peru/create/"
+        'ws_getCalculos' => "https://apierp.dev/api/invoice/peru/calc/",
+        'ws_createImg' => "https://apierp.dev/api/img/",
+        'ws_createCompany' => "https://apierp.dev/api/company/create/",
+        'ws_createProduct' => "https://apierp.dev/api/product/create/",
+        'ws_createClient' => "https://apierp.dev/api/client/create/",
+        'ws_generarPdf' => "https://apierp.dev/api/pdf/create/",
+        'ws_generarInvoice' => "https://apierp.dev/api/invoice/peru/create/"
     ];
 
     public function __construct() {
