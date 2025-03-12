@@ -16,7 +16,8 @@ class apiERP {
         'ws_createProduct' => "https://apierp.dev/api/product/create/",
         'ws_createClient' => "https://apierp.dev/api/client/create/",
         'ws_generarPdf' => "https://apierp.dev/api/pdf/create/",
-        'ws_generarInvoice' => "https://apierp.dev/api/invoice/peru/create/"
+        'ws_generarInvoice' => "https://apierp.dev/api/invoice/peru/create/",
+        'ws_apiPrint' => "https://apierp.dev/api/print/send/"
     ];
 
     public function __construct() {
@@ -104,6 +105,11 @@ class apiERP {
     //FUNCION GENERARINVOICE
     public function generarInvoice(array $data, bool $async = false): ?array {
         return $this->sendRequest('ws_generarInvoice', $data, $async);
+    }
+
+    //FUNCION apiPrint
+    public function sendPrint(array $data, bool $async = false): ?array {
+        return $this->sendRequest('ws_apiPrint', $data, $async);
     }
 }
 ?>
