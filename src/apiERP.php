@@ -108,7 +108,7 @@ class apiERP {
     }
 
     //FUNCION apiPrint
-    public function sendPrint(array $data, bool $async = false): ?array {
+    public function apiPrint(array $data, bool $async = false): ?array {
         return $this->sendRequest('ws_apiPrint', $data, $async);
     }
 }
