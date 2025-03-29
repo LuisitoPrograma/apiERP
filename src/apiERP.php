@@ -111,5 +111,10 @@ class apiERP {
     public function apiPrint(array $data, bool $async = false): ?array {
         return $this->sendRequest('ws_apiPrint', $data, $async);
     }
+
+    //FUNCION createCompany
+    public function createCompany(array $data, bool $async = false): ?array {
+        return $this->sendRequest('ws_createCompany', $data, $async);
+    }
 }
 ?>
