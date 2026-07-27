@@ -6,115 +6,213 @@ use GuzzleHttp\Client;
 use GuzzleHttp\Exception\RequestException;
 
 class apiERP {
-    private $client;
-    
-    //WEBSERVICES URL
-    private static $webservices = [
-        'ws_getCalculos' => "https://apierp.dev/api/invoice/peru/calc/",
-        'ws_createImg' => "https://apierp.dev/api/img/",
-        'ws_createCompany' => "https://apierp.dev/api/company/create/",
-        'ws_createProduct' => "https://apierp.dev/api/product/create/",
-        'ws_createClient' => "https://apierp.dev/api/client/create/",
-        'ws_generarPdf' => "https://apierp.dev/api/pdf/create/",
-        'ws_generarInvoice' => "https://apierp.dev/api/invoice/peru/create/",
-        'ws_apiPrint' => "https://apierp.dev/api/print/send/"
-    ];
+private $client;
 
-    public function __construct() {
-        $this->client = new Client([
-            'timeout' => 15,
-            'verify' => false
-        ]);
-    }
-    
-    //METODO PARA OBTENER LOS WEBSERVICES
-    private function getWebservices(string $key): string {
-        if (!isset(self::$webservices[$key])) {
-            throw new \Exception("Webservice para '$key' no definido.");
-        }
-        return self::$webservices[$key];
-    }
-    
-    //METODO PARA MANEJAR LAS SOLICITUDES API
-    private function sendRequest(string $key, array $data, bool $async = false): ?array {
-        try {
-            $ws_url = $this->getWebservices($key);
+//WS GENERALES
+private static $webservices = [
 
-            if ($async) {
-                // Ejecución en segundo plano
-                $this->client->postAsync($ws_url, [
-                    'json' => $data,
-                    'headers' => [
-                        'Content-Type' => 'application/json',
-                    ],
-                    'timeout' => 1, // Tiempo máximo para enviar la solicitud
-                ])->then(
-                    function ($response) {
-                        // Opcional: Manejar respuesta en segundo plano
-                    },
-                    function ($exception) {
-                        error_log("Error en solicitud as�ncrona: " . $exception->getMessage());
-                    }
-                )->wait(false); // No esperar la finalización
-                return null; // No devuelve datos en modo asíncrono
-            } else {
-                $response = $this->client->post($ws_url, [
-                    'json' => $data,
-                    'headers' => [
-                        'Content-Type' => 'application/json',
-                    ],
-                ]);
+//WS GENERALES - CREATE COMPANY
+'ws_createCompany' => "https://apierp.dev/api/company/create/",
 
-                // Obtener el cuerpo de la respuesta
-                $responseBody = $response->getBody()->getContents();
+//WS GENERALES - READ COMPANY
+'ws_readCompany' => "https://apierp.dev/api/company/read/",
 
-                // Decodificar la respuesta JSON
-                $returnResponse = json_decode($responseBody, true);
+//WS GENERALES - UPDATE COMPANY
+'ws_updateCompany' => "https://apierp.dev/api/company/update/",
 
-                if ($returnResponse === null) {
-                    throw new \Exception("Error al decodificar la respuesta JSON.");
-                }
+//WS GENERALES - READ COMPANY ENDPOINTS
+'ws_readCompanyEndPoints' => "https://apierp.dev/api/company/endpoints/read/",
 
-                return $returnResponse;
-            }
-        } catch (RequestException $e) {
-            return [
-            'estado' => 'ERROR',
-            'codigo_error' => 'HTTP_EXCEPTION',
-            'mensaje_error' => $e->getMessage(),
-        ];
-        } catch (\Exception $e) {
-            return [
-            'estado' => 'ERROR',
-            'codigo_error' => 'GENERAL_EXCEPTION',
-            'mensaje_error' => $e->getMessage(),
-        ];
-        }
-    }
+//WS GENERALES - READ COMPANY CATALOGS
+'ws_readCompanyCatalogs' => "https://apierp.dev/api/company/catalogs/read/"
+];
 
-    //FUNCION GETCALCULOS
-    public function getCalculos(array $data, bool $async = false): ?array {
-        return $this->sendRequest('ws_getCalculos', $data, $async);
-    }
-    
-    //FUNCION GENERARPDF
-    public function generarPdf(array $data, bool $async = false): ?array {
-        return $this->sendRequest('ws_generarPdf', $data, $async);
-    }
-    
-    //FUNCION GENERARINVOICE
-    public function generarInvoice(array $data, bool $async = false): ?array {
-        return $this->sendRequest('ws_generarInvoice', $data, $async);
-    }
+public function __construct() {
+$this->client = new Client([
+'timeout' => 15,
+'verify' => true
+]);
+}
 
-    //FUNCION apiPrint
-    public function apiPrint(array $data, bool $async = false): ?array {
-        return $this->sendRequest('ws_apiPrint', $data, $async);
-    }
+//METODO PARA OBTENER LOS WEBSERVICES
+private function getWebservices(string $key): string {
+if (!isset(self::$webservices[$key])) {
+throw new \Exception("Webservice para '$key' no definido.");
+}
+return self::$webservices[$key];
+}
 
-    //FUNCION createCompany
-    public function createCompany(array $data, bool $async = false): ?array {
-        return $this->sendRequest('ws_createCompany', $data, $async);
-    }
+//METODO PARA VALIDAR ENDPOINTS DINAMICOS
+private function validateEndpoint(string $endpoint): string {
+$endpoint = trim($endpoint);
+
+if ($endpoint === '') {
+throw new \InvalidArgumentException("El endpoint no puede estar vacío.");
+}
+
+if (preg_match('/[\x00-\x1F\x7F]/', $endpoint)) {
+throw new \InvalidArgumentException("El endpoint contiene caracteres no permitidos.");
+}
+
+if (filter_var($endpoint, FILTER_VALIDATE_URL) === false) {
+throw new \InvalidArgumentException("El endpoint proporcionado no es una URL válida.");
+}
+
+$urlParts = parse_url($endpoint);
+
+if (
+!is_array($urlParts) ||
+empty($urlParts['scheme']) ||
+empty($urlParts['host'])
+) {
+throw new \InvalidArgumentException(
+"El endpoint debe contener un protocolo y un dominio válidos."
+);
+}
+
+if (strtolower($urlParts['scheme']) !== 'https') {
+throw new \InvalidArgumentException(
+"El endpoint debe utilizar obligatoriamente el protocolo HTTPS."
+);
+}
+
+// No se permiten credenciales dentro de la URL:
+// https://usuario:clave@dominio.com
+if (isset($urlParts['user']) || isset($urlParts['pass'])) {
+throw new \InvalidArgumentException(
+"El endpoint no puede contener credenciales dentro de la URL."
+);
+}
+
+if (
+filter_var(
+$urlParts['host'],
+FILTER_VALIDATE_DOMAIN,
+FILTER_FLAG_HOSTNAME
+) === false
+) {
+throw new \InvalidArgumentException(
+"El dominio o subdominio del endpoint no es válido."
+);
+}
+
+return $endpoint;
+}
+
+//METODO PARA MANEJAR LAS SOLICITUDES API
+private function sendRequest(?string $key, array $data, bool $async = false, ?string $endpoint = null): ?array {
+try {
+if ($endpoint === null && ($key === null || $key === '')) {
+throw new \InvalidArgumentException("No se ha definido el webservice ni el endpoint de la solicitud.");
+}
+
+$ws_url = $endpoint !== null ? $this->validateEndpoint($endpoint) : $this->getWebservices($key);
+$options = ['json' => $data];
+
+if ($endpoint !== null) {
+$options['allow_redirects'] = false;
+}
+
+if ($async) {
+$this->client->postAsync($ws_url, $options + ['timeout' => 1])->then(null, function ($exception) {
+error_log("Error en solicitud asíncrona: " . $exception->getMessage());
+})->wait(false);
+
+return null;
+}
+
+$response = $this->client->post($ws_url, $options);
+$returnResponse = json_decode($response->getBody()->getContents(), true);
+
+if (json_last_error() !== JSON_ERROR_NONE || !is_array($returnResponse)) {
+throw new \Exception("La respuesta del endpoint no contiene un JSON válido.");
+}
+
+return $returnResponse;
+
+} catch (RequestException $e) {
+return [
+'estado' => 'ERROR',
+'codigo_error' => 'HTTP_EXCEPTION',
+'mensaje_error' => $e->getMessage(),
+];
+} catch (\Exception $e) {
+return [
+'estado' => 'ERROR',
+'codigo_error' => 'GENERAL_EXCEPTION',
+'mensaje_error' => $e->getMessage(),
+];
+}
+}
+
+//FUNCTION - CREATE COMPANY
+public function createCompany(array $data, bool $async = false): ?array {
+return $this->sendRequest('ws_createCompany', $data, $async);
+}
+
+//FUNCTION - READ COMPANY
+public function readCompany(array $data, bool $async = false): ?array {
+return $this->sendRequest('ws_readCompany', $data, $async);
+}
+
+//FUNCTION - UPDATE COMPANY
+public function updateCompany(array $data, bool $async = false): ?array {
+return $this->sendRequest('ws_updateCompany', $data, $async);
+}
+
+//FUNCTION - READ COMPANY ENDPOINTS
+public function readCompanyEndPoints(array $data, bool $async = false): ?array {
+return $this->sendRequest('ws_readCompanyEndPoints', $data, $async);
+}
+
+//FUNCTION - READ COMPANY CATALOGS
+public function readCompanyCatalogs(array $data, bool $async = false): ?array {
+return $this->sendRequest('ws_readCompanyCatalogs', $data, $async);
+}
+
+//FUNCTION - CREATE COMPANY FASYB
+public function createCompanyFasyb(array $data, string $endpoint, bool $async = false): ?array {
+return $this->sendRequest(null, $data, $async, $endpoint);
+}
+
+//FUNCTION - READ COMPANY FASYB
+public function readCompanyFasyb(array $data, string $endpoint, bool $async = false): ?array {
+return $this->sendRequest(null, $data, $async, $endpoint);
+}
+
+//FUNCTION - UPDATE COMPANY FASYB
+public function updateCompanyFasyb(array $data, string $endpoint, bool $async = false): ?array {
+return $this->sendRequest(null, $data, $async, $endpoint);
+}
+
+//FUNCTION - CREATE COMPANY FASYB OPERATIONS
+public function createCompanyFasybOperations(array $data, string $endpoint, bool $async = false): ?array {
+return $this->sendRequest(null, $data, $async, $endpoint);
+}
+
+//FUNCTION - READ COMPANY FASYB OPERATIONS
+public function readCompanyFasybOperations(array $data, string $endpoint, bool $async = false): ?array {
+return $this->sendRequest(null, $data, $async, $endpoint);
+}
+
+//FUNCTION - UPDATE COMPANY FASYB OPERATIONS
+public function updateCompanyFasybOperations(array $data, string $endpoint, bool $async = false): ?array {
+return $this->sendRequest(null, $data, $async, $endpoint);
+}
+
+//FUNCTION - CREATE COMPANY FASYB RECORDS
+public function createCompanyFasybRecords(array $data, string $endpoint, bool $async = false): ?array {
+return $this->sendRequest(null, $data, $async, $endpoint);
+}
+
+//FUNCTION - READ COMPANY FASYB RECORDS
+public function readCompanyFasybRecords(array $data, string $endpoint, bool $async = false): ?array {
+return $this->sendRequest(null, $data, $async, $endpoint);
+}
+
+//FUNCTION - UPDATE COMPANY FASYB RECORDS
+public function updateCompanyFasybRecords(array $data, string $endpoint, bool $async = false): ?array {
+return $this->sendRequest(null, $data, $async, $endpoint);
+}
 }
 ?>
