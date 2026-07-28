@@ -1,10 +1,16 @@
 <?php
 
+//STRICT TYPES
+declare(strict_types=1);
+
+//NAMESPACE
 namespace apiERP;
 
+//USES GUZZLE HTTP
 use GuzzleHttp\Client;
 use GuzzleHttp\Exception\RequestException;
 
+//CLASS APIERP
 class apiERP {
 private $client;
 
@@ -102,47 +108,77 @@ return $endpoint;
 //METODO PARA MANEJAR LAS SOLICITUDES API
 private function sendRequest(?string $key, array $data, bool $async = false, ?string $endpoint = null): ?array {
 try {
-if ($endpoint === null && ($key === null || $key === '')) {
-throw new \InvalidArgumentException("No se ha definido el webservice ni el endpoint de la solicitud.");
+if($endpoint === null && ($key === null || $key === '')){
+throw new \InvalidArgumentException("No se ha definido el endpoint de la solicitud.");
 }
-
 $ws_url = $endpoint !== null ? $this->validateEndpoint($endpoint) : $this->getWebservices($key);
 $options = ['json' => $data];
-
-if ($endpoint !== null) {
+if($endpoint !== null){
 $options['allow_redirects'] = false;
 }
-
-if ($async) {
-$this->client->postAsync($ws_url, $options + ['timeout' => 1])->then(null, function ($exception) {
-error_log("Error en solicitud asíncrona: " . $exception->getMessage());
-})->wait(false);
-
+if($async){
+$this->client->postAsync($ws_url, $options + ['timeout' => 1])->then(null, function($exception){});
 return null;
 }
-
 $response = $this->client->post($ws_url, $options);
 $returnResponse = json_decode($response->getBody()->getContents(), true);
-
-if (json_last_error() !== JSON_ERROR_NONE || !is_array($returnResponse)) {
+if(json_last_error() !== JSON_ERROR_NONE || !is_array($returnResponse)){
 throw new \Exception("La respuesta del endpoint no contiene un JSON válido.");
 }
-
-return $returnResponse;
-
-} catch (RequestException $e) {
-return [
-'estado' => 'ERROR',
-'codigo_error' => 'HTTP_EXCEPTION',
-'mensaje_error' => $e->getMessage(),
-];
-} catch (\Exception $e) {
-return [
-'estado' => 'ERROR',
-'codigo_error' => 'GENERAL_EXCEPTION',
-'mensaje_error' => $e->getMessage(),
-];
+return $this->validateApiERPResponse($returnResponse);
+} catch (RequestException $e){
+if($async){
+return null;
 }
+return $this->validateApiERPResponse([
+'success' => false,
+'message' => 'No se pudo conectar con el servicio apiERP.',
+]);
+} catch (\Throwable $e){
+if($async){
+return null;
+}
+return $this->validateApiERPResponse([
+'success' => false,
+'message' => 'No se pudo procesar la solicitud.',
+]);
+}
+}
+
+//METODO PARA VALIDAR RESPUESTAS API
+private function validateApiERPResponse(mixed $response): array {
+
+//BASIC VALIDATIONS
+if(!is_array($response)){
+throw new \UnexpectedValueException('La respuesta no es válida.');
+}
+if(count($response) !== 2){
+throw new \UnexpectedValueException('La respuesta no es válida.');
+}
+if(!array_key_exists('success', $response) || !array_key_exists('message', $response)){
+throw new \UnexpectedValueException('La respuesta no es válida.');
+}
+if(!is_bool($response['success'])){
+throw new \UnexpectedValueException('La respuesta no es válida.');
+}
+if($response['success'] === false && !is_string($response['message'])){
+throw new \UnexpectedValueException('La respuesta no es válida.');
+}
+if($response['success'] === true && !is_string($response['message']) && !is_array($response['message'])){
+throw new \UnexpectedValueException('La respuesta no es válida.');
+}
+
+//VALIDATE RESPONSE ERROR
+if($response['success'] === false){
+echo json_encode(['success' => false, 'message' => $response['message']], JSON_UNESCAPED_UNICODE | JSON_PRETTY_PRINT);
+exit;
+}
+
+//RETURN
+return [
+'success' => $response['success'],
+'message' => $response['message']
+];
 }
 
 //FUNCTION - CREATE COMPANY
@@ -215,4 +251,3 @@ public function updateCompanyFasybRecords(array $data, string $endpoint, bool $a
 return $this->sendRequest(null, $data, $async, $endpoint);
 }
 }
-?>
