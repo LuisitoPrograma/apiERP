@@ -250,4 +250,14 @@ return $this->sendRequest(null, $data, $async, $endpoint);
 public function updateCompanyFasybRecords(array $data, string $endpoint, bool $async = false): ?array {
 return $this->sendRequest(null, $data, $async, $endpoint);
 }
+
+//FUNCTION - SEND EMAIL
+public function sendEmail(array $data, string $endpoint, bool $async = false): ?array {
+return $this->sendRequest(null, $data, $async, $endpoint);
+}
+
+//FUNCTION - SEND WHATSAPP
+public function sendWhatsApp(array $data, string $endpoint, bool $async = false): ?array {
+return $this->sendRequest(null, $data, $async, $endpoint);
+}
 }
