@@ -251,13 +251,23 @@ public function updateCompanyFasybRecords(array $data, string $endpoint, bool $a
 return $this->sendRequest(null, $data, $async, $endpoint);
 }
 
-//FUNCTION - SEND EMAIL
-public function sendEmail(array $data, string $endpoint, bool $async = false): ?array {
+//FUNCTION - SEND MESSAGE EMAIL
+public function sendMessageEmail(array $data, string $endpoint, bool $async = false): ?array {
 return $this->sendRequest(null, $data, $async, $endpoint);
 }
 
-//FUNCTION - SEND WHATSAPP
-public function sendWhatsApp(array $data, string $endpoint, bool $async = false): ?array {
+//FUNCTION - GET QR WHATSAPP
+public function getQrWhatsApp(array $data, string $endpoint, bool $async = false): ?array {
+return $this->sendRequest(null, $data, $async, $endpoint);
+}
+
+//FUNCTION - SEND MESSAGE WHATSAPP
+public function sendMessageWhatsApp(array $data, string $endpoint, bool $async = false): ?array {
+return $this->sendRequest(null, $data, $async, $endpoint);
+}
+
+//FUNCTION - GET MESSAGE WHATSAPP
+public function getMessageWhatsApp(array $data, string $endpoint, bool $async = false): ?array {
 return $this->sendRequest(null, $data, $async, $endpoint);
 }
 }
