@@ -27,7 +27,7 @@ private static $webservices = [
 'ws_updateCompany' => "https://apierp.dev/api/company/update/",
 
 //WS GENERALES - READ COMPANY ENDPOINTS
-'ws_readCompanyEndPoints' => "https://apierp.dev/api/company/endpoints/read/",
+'ws_masterEndpoints' => "https://apierp-master.s3.us-west-1.amazonaws.com/configMasterEndPoints.json",
 
 //WS GENERALES - READ COMPANY CATALOGS
 'ws_readCompanyCatalogs' => "https://apierp.dev/api/company/catalogs/read/"
@@ -198,7 +198,45 @@ return $this->sendRequest('ws_updateCompany', $data, $async);
 
 //FUNCTION - READ COMPANY ENDPOINTS
 public function readCompanyEndPoints(array $data, bool $async = false): ?array {
-return $this->sendRequest('ws_readCompanyEndPoints', $data, $async);
+$masterToken = $data['setMasterAuthToken'] ?? null;
+if(!$masterToken){
+throw new \Exception("Master AuthToken Inválido");
+}
+try {
+$url = self::$webservices['ws_masterEndpoints'];
+$response = $this->client->get($url, ['timeout' => 15]);
+$config = json_decode($response->getBody()->getContents(), true);
+if(json_last_error() !== JSON_ERROR_NONE || !isset($config['setMasterEndPoints'])){
+throw new \Exception("JSON Inválido");
+}
+$selected = null;
+foreach($config['setMasterEndPoints'] as $entry){
+if(isset($entry['setMasterAuthToken']) && $entry['setMasterAuthToken'] === $masterToken){
+$selected = $entry;
+break;
+}
+}
+if(!$selected){
+throw new \Exception("Master AuthToken Inválido");
+}
+$endpoints = $selected['setCompanyEndPoints'] ?? [];
+if(isset($data['setCompanyEndPointType']) && $data['setCompanyEndPointType'] != 0){
+$type = (int)$data['setCompanyEndPointType'];
+$endpoints = array_values(array_filter($endpoints, function($e) use ($type) {
+return isset($e['setCompanyEndPointType']) && (int)$e['setCompanyEndPointType'] === $type;
+}));
+}
+$array_return = ['setCompanyEndPoints' => $endpoints];
+return [
+'success' => true,
+'message' => $array_return
+];
+} catch (\Throwable $e){
+return [
+'success' => false,
+'message' => $e->getMessage()
+];
+}
 }
 
 //FUNCTION - READ COMPANY CATALOGS
@@ -268,6 +306,11 @@ return $this->sendRequest(null, $data, $async, $endpoint);
 
 //FUNCTION - GET MESSAGE WHATSAPP
 public function getMessageWhatsApp(array $data, string $endpoint, bool $async = false): ?array {
+return $this->sendRequest(null, $data, $async, $endpoint);
+}
+
+//FUNCTION - CALL ARTIFICIAL INTELLIGENCE
+public function callArtificialIntelligence(array $data, string $endpoint, bool $async = false): ?array {
 return $this->sendRequest(null, $data, $async, $endpoint);
 }
 }
