@@ -29,6 +29,9 @@ private static $webservices = [
 //WS GENERALES - READ COMPANY ENDPOINTS
 'ws_masterEndpoints' => "https://apierp-master.s3.us-west-1.amazonaws.com/configMasterEndPoints.json",
 
+//WS GENERALES - DOMINIOS E IPS AUTORIZADOS
+'ws_authorizedDomains' => "https://apierp-master.s3.us-west-1.amazonaws.com/authorizedDomains.json",
+
 //WS GENERALES - READ COMPANY CATALOGS
 'ws_readCompanyCatalogs' => "https://apierp.dev/api/company/catalogs/read/"
 ];
@@ -51,58 +54,19 @@ return self::$webservices[$key];
 //METODO PARA VALIDAR ENDPOINTS DINAMICOS
 private function validateEndpoint(string $endpoint): string {
 $endpoint = trim($endpoint);
-
-if ($endpoint === '') {
-throw new \InvalidArgumentException("El endpoint no puede estar vacío.");
-}
-
-if (preg_match('/[\x00-\x1F\x7F]/', $endpoint)) {
-throw new \InvalidArgumentException("El endpoint contiene caracteres no permitidos.");
-}
-
-if (filter_var($endpoint, FILTER_VALIDATE_URL) === false) {
-throw new \InvalidArgumentException("El endpoint proporcionado no es una URL válida.");
-}
-
+if($endpoint === '' || preg_match('/[\x00-\x1F\x7F]/', $endpoint) || filter_var($endpoint, FILTER_VALIDATE_URL) === false) throw new \InvalidArgumentException('El endpoint proporcionado no es una URL valida.');
 $urlParts = parse_url($endpoint);
-
-if (
-!is_array($urlParts) ||
-empty($urlParts['scheme']) ||
-empty($urlParts['host'])
-) {
-throw new \InvalidArgumentException(
-"El endpoint debe contener un protocolo y un dominio válidos."
-);
+if(!is_array($urlParts) || empty($urlParts['scheme']) || empty($urlParts['host']) || strtolower($urlParts['scheme']) !== 'https' || isset($urlParts['user']) || isset($urlParts['pass'])) throw new \InvalidArgumentException('El endpoint debe utilizar HTTPS y no contener credenciales.');
+$apierp_host = strtolower($urlParts['host']);
+$apierp_isIp = filter_var($apierp_host, FILTER_VALIDATE_IP) !== false;
+if(!$apierp_isIp && filter_var($apierp_host, FILTER_VALIDATE_DOMAIN, FILTER_FLAG_HOSTNAME) === false) throw new \InvalidArgumentException('El dominio del endpoint no es valido.');
+$apierp_authorized = $this->apierp_getCachedAuthorizedDomains();
+foreach($apierp_authorized[$apierp_isIp ? 'ips' : 'domains'] as $apierp_allowed){
+$apierp_allowed = strtolower(trim($apierp_allowed));
+if($apierp_isIp && $apierp_host === $apierp_allowed) return $endpoint;
+if(!$apierp_isIp && ($apierp_host === $apierp_allowed || str_ends_with($apierp_host, '.' . $apierp_allowed))) return $endpoint;
 }
-
-if (strtolower($urlParts['scheme']) !== 'https') {
-throw new \InvalidArgumentException(
-"El endpoint debe utilizar obligatoriamente el protocolo HTTPS."
-);
-}
-
-// No se permiten credenciales dentro de la URL:
-// https://usuario:clave@dominio.com
-if (isset($urlParts['user']) || isset($urlParts['pass'])) {
-throw new \InvalidArgumentException(
-"El endpoint no puede contener credenciales dentro de la URL."
-);
-}
-
-if (
-filter_var(
-$urlParts['host'],
-FILTER_VALIDATE_DOMAIN,
-FILTER_FLAG_HOSTNAME
-) === false
-) {
-throw new \InvalidArgumentException(
-"El dominio o subdominio del endpoint no es válido."
-);
-}
-
-return $endpoint;
+throw new \InvalidArgumentException('El dominio o IP del endpoint no esta autorizado.');
 }
 
 //METODO PARA MANEJAR LAS SOLICITUDES API
@@ -168,12 +132,6 @@ if($response['success'] === true && !is_string($response['message']) && !is_arra
 throw new \UnexpectedValueException('La respuesta no es válida.');
 }
 
-//VALIDATE RESPONSE ERROR
-if($response['success'] === false){
-echo json_encode(['success' => false, 'message' => $response['message']], JSON_UNESCAPED_UNICODE | JSON_PRETTY_PRINT);
-exit;
-}
-
 //RETURN
 return [
 'success' => $response['success'],
@@ -196,46 +154,150 @@ public function updateCompany(array $data, bool $async = false): ?array {
 return $this->sendRequest('ws_updateCompany', $data, $async);
 }
 
-//FUNCTION - READ COMPANY ENDPOINTS
-public function readCompanyEndPoints(array $data, bool $async = false): ?array {
-$masterToken = $data['setMasterAuthToken'] ?? null;
-if(!$masterToken){
-throw new \Exception("Master AuthToken Inválido");
+//VALIDAR LA ESTRUCTURA DEL JSON DE ENDPOINTS
+private function isValidMasterEndpointsConfig(mixed $config): bool {
+if(!is_array($config) || !isset($config['setMasterEndPoints']) || !is_array($config['setMasterEndPoints']) || $config['setMasterEndPoints'] === []) return false;
+foreach($config['setMasterEndPoints'] as $entry){
+if(!is_array($entry) || !is_string($entry['setMasterAuthToken'] ?? null) || !is_array($entry['setCompanyEndPoints'] ?? null)) return false;
 }
+return true;
+}
+
+//VALIDAR LA ESTRUCTURA DEL JSON DE DOMINIOS AUTORIZADOS
+private function apierp_isValidAuthorizedDomains(mixed $config): bool {
+if(!is_array($config) || !isset($config['domains'], $config['ips']) || !is_array($config['domains']) || !is_array($config['ips'])) return false;
+foreach(array_merge($config['domains'], $config['ips']) as $apierp_value){
+if(!is_string($apierp_value) || trim($apierp_value) === '') return false;
+}
+return true;
+}
+
+//CACHE PRIVADA DE ENDPOINTS MAESTROS
+private function getCachedMasterEndpoints(): array {
+return $this->apierp_getCachedS3Json('ws_masterEndpoints', [$this, 'isValidMasterEndpointsConfig']);
+}
+
+//CACHE PRIVADA DE DOMINIOS E IPS AUTORIZADOS
+private function apierp_getCachedAuthorizedDomains(): array {
+return $this->apierp_getCachedS3Json('ws_authorizedDomains', [$this, 'apierp_isValidAuthorizedDomains']);
+}
+
+//DESCARGAR Y COMPARTIR CONFIGURACIONES S3 CON ACTUALIZACION DIARIA
+private function apierp_getCachedS3Json(string $apierp_key, callable $apierp_validator): array {
+$directory = __DIR__ . '/data/look/private';
+$cacheFile = $directory . '/' . $apierp_key . '.json';
+$stateFile = $directory . '/.' . $apierp_key . '.state';
+$lockFile = $directory . '/.' . $apierp_key . '.lock';
+$today = (new \DateTimeImmutable('now', new \DateTimeZone('UTC')))->format('Y-m-d');
+$isWindows = PHP_OS_FAMILY === 'Windows';
+
+//PREPARAR DIRECTORIO COMPARTIDO
+if(!is_dir($directory) && !@mkdir($directory, 0700, true) && !is_dir($directory)) throw new \RuntimeException('No se pudo crear el directorio de configuraciones.');
+if(is_link($directory) || !is_writable($directory)) throw new \RuntimeException('El directorio de configuraciones no esta disponible.');
+if(!$isWindows && !@chmod($directory, 0700)) throw new \RuntimeException('No se pudo restringir el directorio de configuraciones.');
+$accessFile = $directory . '/.htaccess';
+if(is_link($accessFile)) throw new \RuntimeException('La proteccion HTTP no es valida.');
+if(!is_file($accessFile) || @file_get_contents($accessFile) !== "Require all denied\n"){
+if(@file_put_contents($accessFile, "Require all denied\n", LOCK_EX) !== strlen("Require all denied\n")) throw new \RuntimeException('No se pudo proteger el directorio de configuraciones.');
+}
+if(!$isWindows && !@chmod($accessFile, 0600)) throw new \RuntimeException('No se pudo restringir la proteccion HTTP.');
+if(is_link($lockFile) || is_link($stateFile) || is_link($cacheFile)) throw new \RuntimeException('La ruta del cache no es valida.');
+
+//LECTURA RAPIDA DE CONFIGURACION ACTUALIZADA
+$state = is_file($stateFile) ? trim((string)@file_get_contents($stateFile)) : '';
+if(!$isWindows && $state === $today . '|ok' && is_file($cacheFile)){
+$raw = @file_get_contents($cacheFile);
+$config = is_string($raw) ? json_decode($raw, true) : null;
+if($apierp_validator($config)) return $config;
+}
+
+//BLOQUEAR ACTUALIZACION CONCURRENTE
+$lock = @fopen($lockFile, 'c');
+if($lock === false) throw new \RuntimeException('No se pudo crear el bloqueo del cache.');
 try {
-$url = self::$webservices['ws_masterEndpoints'];
-$response = $this->client->get($url, ['timeout' => 15]);
-$config = json_decode($response->getBody()->getContents(), true);
-if(json_last_error() !== JSON_ERROR_NONE || !isset($config['setMasterEndPoints'])){
-throw new \Exception("JSON Inválido");
+if(!$isWindows && !@chmod($lockFile, 0600)) throw new \RuntimeException('No se pudo restringir el bloqueo del cache.');
+if(!@flock($lock, LOCK_EX)) throw new \RuntimeException('No se pudo bloquear el cache.');
+$state = is_file($stateFile) ? trim((string)@file_get_contents($stateFile)) : '';
+$raw = is_file($cacheFile) ? @file_get_contents($cacheFile) : false;
+$config = is_string($raw) ? json_decode($raw, true) : null;
+if($state === $today . '|ok' && $apierp_validator($config)) return $config;
+if($state === $today . '|failed|missing' || ($state === $today . '|failed|cached' && is_file($cacheFile))) throw new \RuntimeException('La actualizacion diaria de la configuracion fallo. Elimine su archivo de estado para reintentar.');
+
+//REGISTRAR INTENTO DIARIO ANTES DE CONSULTAR S3
+$failedState = $today . '|failed|' . (is_file($cacheFile) ? 'cached' : 'missing');
+if(@file_put_contents($stateFile, $failedState, LOCK_EX) !== strlen($failedState)) throw new \RuntimeException('No se pudo registrar el intento de actualizacion.');
+if(!$isWindows && !@chmod($stateFile, 0600)) throw new \RuntimeException('No se pudo restringir el estado del cache.');
+try {
+$response = $this->client->get($this->getWebservices($apierp_key), ['timeout' => 15, 'connect_timeout' => 5, 'allow_redirects' => false]);
+$remoteRaw = $response->getBody()->getContents();
+if(strlen($remoteRaw) > 8388608) throw new \RuntimeException('La configuracion supera el tamano permitido.');
+$remote = json_decode($remoteRaw, true, 512, JSON_THROW_ON_ERROR);
+if(!$apierp_validator($remote)) throw new \RuntimeException('La configuracion descargada no es valida.');
+
+//REEMPLAZAR ARCHIVO COMPLETO DE FORMA ATOMICA
+$tempFile = @tempnam($directory, '.' . $apierp_key . '_');
+if($tempFile === false) throw new \RuntimeException('No se pudo crear el archivo temporal.');
+try {
+if(!$isWindows && !@chmod($tempFile, 0600)) throw new \RuntimeException('No se pudo restringir el archivo temporal.');
+if(@file_put_contents($tempFile, $remoteRaw) !== strlen($remoteRaw) || !@rename($tempFile, $cacheFile)) throw new \RuntimeException('No se pudo guardar el archivo de configuracion.');
+} finally {
+if(is_file($tempFile)) @unlink($tempFile);
 }
+$okState = $today . '|ok';
+if(@file_put_contents($stateFile, $okState, LOCK_EX) !== strlen($okState)) throw new \RuntimeException('No se pudo confirmar el cache.');
+return $remote;
+} catch (\Throwable $e){
+throw new \RuntimeException('No se pudo actualizar la configuracion diaria.', 0, $e);
+}
+} finally {
+@flock($lock, LOCK_UN);
+fclose($lock);
+}
+}
+
+//RESOLVER EL ENDPOINT OBLIGATORIO POR TIPO
+private function resolveCompanyEndpoint(string $masterAuthToken, int $type): string {
+if($masterAuthToken === '' || $type <= 0) throw new \InvalidArgumentException('El Master Auth Token y el tipo de endpoint son obligatorios.');
+$response = $this->readCompanyEndPoints(['setMasterAuthToken' => $masterAuthToken, 'setCompanyEndPointType' => $type]);
+if(($response['success'] ?? false) !== true) throw new \RuntimeException('No se pudo consultar el endpoint solicitado.');
+$endpoints = $response['message']['setCompanyEndPoints'] ?? null;
+if(!is_array($endpoints) || count($endpoints) !== 1 || !is_string($endpoints[0]['setCompanyEndPoint'] ?? null)) throw new \RuntimeException('El tipo solicitado debe tener exactamente un endpoint valido.');
+return $endpoints[0]['setCompanyEndPoint'];
+}
+
+//ENVIAR SOLICITUD AL TIPO OBLIGATORIO
+private function apierp_sendCompanyEndpointRequest(array $data, string $masterAuthToken, int $type, bool $async): ?array {
+try {
+return $this->sendRequest(null, $data, $async, $this->resolveCompanyEndpoint($masterAuthToken, $type));
+} catch (\Throwable $e){
+return $async ? null : ['success' => false, 'message' => 'No se pudo resolver el endpoint solicitado.'];
+}
+}
+
+//FUNCTION - READ COMPANY ENDPOINTS
+public function readCompanyEndPoints(array $data): array {
+try {
+$masterToken = $data['setMasterAuthToken'] ?? null;
+if(!is_string($masterToken) || $masterToken === '') throw new \RuntimeException('Master AuthToken Inválido');
+$config = $this->getCachedMasterEndpoints();
 $selected = null;
 foreach($config['setMasterEndPoints'] as $entry){
-if(isset($entry['setMasterAuthToken']) && $entry['setMasterAuthToken'] === $masterToken){
+if(hash_equals($entry['setMasterAuthToken'], $masterToken)){
 $selected = $entry;
 break;
 }
 }
-if(!$selected){
-throw new \Exception("Master AuthToken Inválido");
-}
-$endpoints = $selected['setCompanyEndPoints'] ?? [];
-if(isset($data['setCompanyEndPointType']) && $data['setCompanyEndPointType'] != 0){
+if($selected === null) throw new \RuntimeException('Master AuthToken Inválido');
+$endpoints = $selected['setCompanyEndPoints'];
+if(isset($data['setCompanyEndPointType']) && (int)$data['setCompanyEndPointType'] !== 0){
 $type = (int)$data['setCompanyEndPointType'];
-$endpoints = array_values(array_filter($endpoints, function($e) use ($type) {
-return isset($e['setCompanyEndPointType']) && (int)$e['setCompanyEndPointType'] === $type;
+$endpoints = array_values(array_filter($endpoints, static function($entry) use ($type): bool {
+return is_array($entry) && isset($entry['setCompanyEndPointType']) && (int)$entry['setCompanyEndPointType'] === $type;
 }));
 }
-$array_return = ['setCompanyEndPoints' => $endpoints];
-return [
-'success' => true,
-'message' => $array_return
-];
+return ['success' => true, 'message' => ['setCompanyEndPoints' => $endpoints]];
 } catch (\Throwable $e){
-return [
-'success' => false,
-'message' => $e->getMessage()
-];
+return ['success' => false, 'message' => $e->getMessage()];
 }
 }
 
@@ -245,72 +307,72 @@ return $this->sendRequest('ws_readCompanyCatalogs', $data, $async);
 }
 
 //FUNCTION - CREATE COMPANY FASYB
-public function createCompanyFasyb(array $data, string $endpoint, bool $async = false): ?array {
-return $this->sendRequest(null, $data, $async, $endpoint);
+public function createCompanyFasyb(array $data, string $masterAuthToken, bool $async = false): ?array {
+return $this->apierp_sendCompanyEndpointRequest($data, $masterAuthToken, 7, $async);
 }
 
 //FUNCTION - READ COMPANY FASYB
-public function readCompanyFasyb(array $data, string $endpoint, bool $async = false): ?array {
-return $this->sendRequest(null, $data, $async, $endpoint);
+public function readCompanyFasyb(array $data, string $masterAuthToken, bool $async = false): ?array {
+return $this->apierp_sendCompanyEndpointRequest($data, $masterAuthToken, 8, $async);
 }
 
 //FUNCTION - UPDATE COMPANY FASYB
-public function updateCompanyFasyb(array $data, string $endpoint, bool $async = false): ?array {
-return $this->sendRequest(null, $data, $async, $endpoint);
+public function updateCompanyFasyb(array $data, string $masterAuthToken, bool $async = false): ?array {
+return $this->apierp_sendCompanyEndpointRequest($data, $masterAuthToken, 9, $async);
 }
 
 //FUNCTION - CREATE COMPANY FASYB OPERATIONS
-public function createCompanyFasybOperations(array $data, string $endpoint, bool $async = false): ?array {
-return $this->sendRequest(null, $data, $async, $endpoint);
+public function createCompanyFasybOperations(array $data, string $masterAuthToken, bool $async = false): ?array {
+return $this->apierp_sendCompanyEndpointRequest($data, $masterAuthToken, 11, $async);
 }
 
 //FUNCTION - READ COMPANY FASYB OPERATIONS
-public function readCompanyFasybOperations(array $data, string $endpoint, bool $async = false): ?array {
-return $this->sendRequest(null, $data, $async, $endpoint);
+public function readCompanyFasybOperations(array $data, string $masterAuthToken, bool $async = false): ?array {
+return $this->apierp_sendCompanyEndpointRequest($data, $masterAuthToken, 12, $async);
 }
 
 //FUNCTION - UPDATE COMPANY FASYB OPERATIONS
-public function updateCompanyFasybOperations(array $data, string $endpoint, bool $async = false): ?array {
-return $this->sendRequest(null, $data, $async, $endpoint);
+public function updateCompanyFasybOperations(array $data, string $masterAuthToken, bool $async = false): ?array {
+return $this->apierp_sendCompanyEndpointRequest($data, $masterAuthToken, 13, $async);
 }
 
 //FUNCTION - CREATE COMPANY FASYB RECORDS
-public function createCompanyFasybRecords(array $data, string $endpoint, bool $async = false): ?array {
-return $this->sendRequest(null, $data, $async, $endpoint);
+public function createCompanyFasybRecords(array $data, string $masterAuthToken, bool $async = false): ?array {
+return $this->apierp_sendCompanyEndpointRequest($data, $masterAuthToken, 14, $async);
 }
 
 //FUNCTION - READ COMPANY FASYB RECORDS
-public function readCompanyFasybRecords(array $data, string $endpoint, bool $async = false): ?array {
-return $this->sendRequest(null, $data, $async, $endpoint);
+public function readCompanyFasybRecords(array $data, string $masterAuthToken, bool $async = false): ?array {
+return $this->apierp_sendCompanyEndpointRequest($data, $masterAuthToken, 15, $async);
 }
 
 //FUNCTION - UPDATE COMPANY FASYB RECORDS
-public function updateCompanyFasybRecords(array $data, string $endpoint, bool $async = false): ?array {
-return $this->sendRequest(null, $data, $async, $endpoint);
+public function updateCompanyFasybRecords(array $data, string $masterAuthToken, bool $async = false): ?array {
+return $this->apierp_sendCompanyEndpointRequest($data, $masterAuthToken, 16, $async);
 }
 
 //FUNCTION - SEND MESSAGE EMAIL
-public function sendMessageEmail(array $data, string $endpoint, bool $async = false): ?array {
-return $this->sendRequest(null, $data, $async, $endpoint);
+public function sendMessageEmail(array $data, string $masterAuthToken, bool $async = false): ?array {
+return $this->apierp_sendCompanyEndpointRequest($data, $masterAuthToken, 21, $async);
 }
 
 //FUNCTION - GET QR WHATSAPP
-public function getQrWhatsApp(array $data, string $endpoint, bool $async = false): ?array {
-return $this->sendRequest(null, $data, $async, $endpoint);
+public function getQrWhatsApp(array $data, string $masterAuthToken, bool $async = false): ?array {
+return $this->apierp_sendCompanyEndpointRequest($data, $masterAuthToken, 22, $async);
 }
 
 //FUNCTION - SEND MESSAGE WHATSAPP
-public function sendMessageWhatsApp(array $data, string $endpoint, bool $async = false): ?array {
-return $this->sendRequest(null, $data, $async, $endpoint);
+public function sendMessageWhatsApp(array $data, string $masterAuthToken, bool $async = false): ?array {
+return $this->apierp_sendCompanyEndpointRequest($data, $masterAuthToken, 23, $async);
 }
 
 //FUNCTION - GET MESSAGE WHATSAPP
-public function getMessageWhatsApp(array $data, string $endpoint, bool $async = false): ?array {
-return $this->sendRequest(null, $data, $async, $endpoint);
+public function getMessageWhatsApp(array $data, string $masterAuthToken, bool $async = false): ?array {
+return $this->apierp_sendCompanyEndpointRequest($data, $masterAuthToken, 24, $async);
 }
 
 //FUNCTION - CALL ARTIFICIAL INTELLIGENCE
-public function callArtificialIntelligence(array $data, string $endpoint, bool $async = false): ?array {
-return $this->sendRequest(null, $data, $async, $endpoint);
+public function callArtificialIntelligence(array $data, string $masterAuthToken, bool $async = false): ?array {
+return $this->apierp_sendCompanyEndpointRequest($data, $masterAuthToken, 25, $async);
 }
 }
