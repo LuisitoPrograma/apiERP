@@ -375,4 +375,14 @@ return $this->apierp_sendCompanyEndpointRequest($data, $masterAuthToken, 24, $as
 public function callArtificialIntelligence(array $data, string $masterAuthToken, bool $async = false): ?array {
 return $this->apierp_sendCompanyEndpointRequest($data, $masterAuthToken, 25, $async);
 }
+
+//FUNCTION - CONVERT TEXT TO SPEECH
+public function convertTextToSpeech(array $data, string $masterAuthToken, bool $async = false): ?array {
+return $this->apierp_sendCompanyEndpointRequest($data, $masterAuthToken, 27, $async);
+}
+
+//FUNCTION - UPLOAD FILES TO S3
+public function uploadFilesToS3(array $data, string $masterAuthToken, bool $async = false): ?array {
+return $this->apierp_sendCompanyEndpointRequest($data, $masterAuthToken, 28, $async);
+}
 }
