@@ -70,13 +70,14 @@ throw new \InvalidArgumentException('El dominio o IP del endpoint no esta autori
 }
 
 //METODO PARA MANEJAR LAS SOLICITUDES API
-private function sendRequest(?string $key, array $data, bool $async = false, ?string $endpoint = null): ?array {
+private function sendRequest(?string $key, array $data, bool $async = false, ?string $endpoint = null, ?int $timeout = null): ?array {
 try {
 if($endpoint === null && ($key === null || $key === '')){
 throw new \InvalidArgumentException("No se ha definido el endpoint de la solicitud.");
 }
 $ws_url = $endpoint !== null ? $this->validateEndpoint($endpoint) : $this->getWebservices($key);
 $options = ['json' => $data];
+if($timeout !== null && !$async){$options['timeout'] = $timeout; $options['http_errors'] = false;}
 if($endpoint !== null){
 $options['allow_redirects'] = false;
 }
@@ -184,7 +185,8 @@ return $this->apierp_getCachedS3Json('ws_authorizedDomains', [$this, 'apierp_isV
 
 //DESCARGAR Y COMPARTIR CONFIGURACIONES S3 CON ACTUALIZACION DIARIA
 private function apierp_getCachedS3Json(string $apierp_key, callable $apierp_validator): array {
-$directory = __DIR__ . '/data/look/private';
+$apierp_cacheIdentity = PHP_OS_FAMILY === 'Windows' ? (string)getenv('USERNAME') : (string)posix_geteuid();
+$directory = rtrim(sys_get_temp_dir(), '/\\') . DIRECTORY_SEPARATOR . 'apierp_' . hash('sha256', __DIR__ . '|' . $apierp_cacheIdentity);
 $cacheFile = $directory . '/' . $apierp_key . '.json';
 $stateFile = $directory . '/.' . $apierp_key . '.state';
 $lockFile = $directory . '/.' . $apierp_key . '.lock';
@@ -266,9 +268,9 @@ return $endpoints[0]['setCompanyEndPoint'];
 }
 
 //ENVIAR SOLICITUD AL TIPO OBLIGATORIO
-private function apierp_sendCompanyEndpointRequest(array $data, string $masterAuthToken, int $type, bool $async): ?array {
+private function apierp_sendCompanyEndpointRequest(array $data, string $masterAuthToken, int $type, bool $async, ?int $timeout = null): ?array {
 try {
-return $this->sendRequest(null, $data, $async, $this->resolveCompanyEndpoint($masterAuthToken, $type));
+return $this->sendRequest(null, $data, $async, $this->resolveCompanyEndpoint($masterAuthToken, $type), $timeout);
 } catch (\Throwable $e){
 return $async ? null : ['success' => false, 'message' => 'No se pudo resolver el endpoint solicitado.'];
 }
@@ -378,11 +380,38 @@ return $this->apierp_sendCompanyEndpointRequest($data, $masterAuthToken, 25, $as
 
 //FUNCTION - CONVERT TEXT TO SPEECH
 public function convertTextToSpeech(array $data, string $masterAuthToken, bool $async = false): ?array {
-return $this->apierp_sendCompanyEndpointRequest($data, $masterAuthToken, 27, $async);
+if($async) return $this->apierp_sendCompanyEndpointRequest($data, $masterAuthToken, 27, true);
+try{
+$endpoint = $this->validateEndpoint($this->resolveCompanyEndpoint($masterAuthToken, 27));
+$response = $this->client->post($endpoint, ['json' => $data, 'allow_redirects' => false, 'http_errors' => false, 'timeout' => 35, 'connect_timeout' => 5, 'stream' => true]);
+$status = $response->getStatusCode();
+$contentType = strtolower($response->getHeaderLine('Content-Type'));
+$stream = $response->getBody();
+$raw = '';
+while(!$stream->eof()){
+$chunk = $stream->read(65536);
+if($chunk === '') break;
+$raw .= $chunk;
+if(strlen($raw) > 67108864) throw new \RuntimeException('El audio recibido supera el tamaño máximo permitido.');
+}
+if($status === 200 && str_contains($contentType, 'audio/wav')){
+$expectedBytes = (int)$response->getHeaderLine('Content-Length');
+if($expectedBytes > 0 && strlen($raw) !== $expectedBytes) throw new \RuntimeException('El WAV fue recibido incompleto.');
+if(strlen($raw) < 44 || substr($raw, 0, 4) !== 'RIFF' || substr($raw, 8, 4) !== 'WAVE') throw new \RuntimeException('La API TTS no devolvió un archivo WAV válido.');
+return ['success' => true, 'message' => ['mime_type' => 'audio/wav', 'audio_base64' => base64_encode($raw), 'bytes' => strlen($raw)]];
+}
+$decoded = json_decode($raw, true);
+if(!is_array($decoded)) throw new \RuntimeException('La API TTS no devolvió una respuesta JSON válida.');
+$result = $this->validateApiERPResponse($decoded);
+if($status >= 400 && $result['success']) return ['success' => false, 'message' => 'La API TTS rechazó la solicitud.'];
+return $result;
+}catch(\Throwable $e){
+return ['success' => false, 'message' => 'No se pudo procesar la solicitud TTS.'];
+}
 }
 
 //FUNCTION - UPLOAD FILES TO S3
 public function uploadFilesToS3(array $data, string $masterAuthToken, bool $async = false): ?array {
-return $this->apierp_sendCompanyEndpointRequest($data, $masterAuthToken, 28, $async);
+return $this->apierp_sendCompanyEndpointRequest($data, $masterAuthToken, 28, $async, 90);
 }
 }
