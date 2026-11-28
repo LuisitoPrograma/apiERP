@@ -380,6 +380,7 @@ return $this->apierp_sendCompanyEndpointRequest($data, $masterAuthToken, 25, $as
 
 //FUNCTION - CONVERT TEXT TO SPEECH
 public function convertTextToSpeech(array $data, string $masterAuthToken, bool $async = false): ?array {
+if(is_string($data['action'] ?? null) && trim($data['action']) === 'stream') return ['success' => false, 'message' => 'Para streaming utiliza streamTextToSpeech().'];
 if($async) return $this->apierp_sendCompanyEndpointRequest($data, $masterAuthToken, 27, true);
 try{
 $endpoint = $this->validateEndpoint($this->resolveCompanyEndpoint($masterAuthToken, 27));
@@ -408,6 +409,197 @@ return $result;
 }catch(\Throwable $e){
 return ['success' => false, 'message' => 'No se pudo procesar la solicitud TTS.'];
 }
+}
+
+//FUNCTION - STREAM TEXT TO SPEECH
+public function streamTextToSpeech(array $data, string $masterAuthToken, callable $onEvent): array {
+
+$stream = null;
+
+try{
+
+if(
+($data['action'] ?? null) !== 'stream' ||
+($data['response_format'] ?? null) !== 'pcm' ||
+($data['async'] ?? null) !== false
+) throw new \InvalidArgumentException('Streaming requiere action=stream, response_format=pcm y async=false.');
+
+$endpoint = $this->validateEndpoint($this->resolveCompanyEndpoint($masterAuthToken, 27));
+
+$deadline = hrtime(true) + 35000000000;
+
+$response = $this->client->post($endpoint, [
+'json' => $data,
+'headers' => ['Accept' => 'application/x-ndjson, application/json'],
+'allow_redirects' => false,
+'http_errors' => false,
+'connect_timeout' => 5,
+'timeout' => 35,
+'read_timeout' => 25,
+'stream' => true
+]);
+
+$stream = $response->getBody();
+
+$status = $response->getStatusCode();
+
+$contentType = strtolower(trim(explode(';', $response->getHeaderLine('Content-Type'), 2)[0]));
+
+//LECTURA PROGRESIVA CON CONTROL DE TIEMPO
+$read = static function() use ($stream, $deadline): string{
+
+if(hrtime(true) >= $deadline) throw new \RuntimeException('Tiempo máximo de streaming excedido.');
+
+$chunk = $stream->read(8192);
+
+if($chunk === '' && !$stream->eof()) throw new \RuntimeException('Lectura de streaming interrumpida.');
+
+return $chunk;
+
+};
+
+//VALIDAR RESPUESTA HTTP Y FORMATO
+if($status !== 200 || $contentType !== 'application/x-ndjson'){
+
+if($contentType === 'application/json'){
+
+$raw = '';
+
+while(!$stream->eof()){
+
+$raw .= $read();
+
+if(strlen($raw) > 65536) throw new \RuntimeException('Respuesta JSON demasiado grande.');
+
+}
+
+$result = $this->validateApiERPResponse(json_decode($raw, true, 512, JSON_THROW_ON_ERROR));
+
+if(!$result['success']) return $result;
+
+}
+
+throw new \RuntimeException('La API no devolvió un streaming válido.');
+
+}
+
+//CONTROL DEL STREAMING
+$buffer = '';
+$started = false;
+$bytes = 0;
+
+while(!$stream->eof()){
+
+$buffer .= $read();
+
+while(($pos = strpos($buffer, "\n")) !== false){
+
+if($pos > 131072) throw new \RuntimeException('Evento TTS demasiado grande.');
+
+$line = substr($buffer, 0, $pos);
+
+$buffer = substr($buffer, $pos + 1);
+
+$event = json_decode($line, true, 512, JSON_THROW_ON_ERROR);
+
+if(!is_array($event)) throw new \RuntimeException('Evento TTS inválido.');
+
+switch($event['type'] ?? null){
+
+case 'start':
+
+if(
+$started ||
+($event['format'] ?? null) !== 'pcm_s16le' ||
+($event['sample_rate'] ?? null) !== 22050 ||
+($event['channels'] ?? null) !== 1
+) throw new \RuntimeException('Formato de streaming inválido.');
+
+$started = true;
+
+break;
+
+case 'audio':
+
+if(
+!$started ||
+!is_string($event['audio_base64'] ?? null)
+) throw new \RuntimeException('Fragmento TTS inválido.');
+
+$pcm = base64_decode($event['audio_base64'], true);
+
+if(
+$pcm === false ||
+strlen($pcm) < 2 ||
+strlen($pcm) % 2 !== 0 ||
+strlen($pcm) > 4194304 - $bytes
+) throw new \RuntimeException('PCM inválido o demasiado grande.');
+
+$bytes += strlen($pcm);
+
+break;
+
+case 'done':
+
+if(
+!$started ||
+$bytes === 0 ||
+($event['bytes'] ?? null) !== $bytes ||
+!is_int($event['units'] ?? null) ||
+$event['units'] < 1 ||
+$event['units'] > 2 ||
+trim($buffer) !== ''
+) throw new \RuntimeException('Final de streaming inválido.');
+
+return [
+'success' => true,
+'message' => [
+'bytes' => $bytes,
+'units' => $event['units']
+]
+];
+
+case 'error':
+
+throw new \RuntimeException('La API interrumpió el streaming.');
+
+default:
+
+throw new \RuntimeException('Evento TTS desconocido.');
+
+}
+
+//ENTREGAR EVENTO SIN ESPERAR EL AUDIO COMPLETO
+if($onEvent($event) === false){
+
+return [
+'success' => false,
+'message' => 'Streaming TTS cancelado.'
+];
+
+}
+
+}
+
+if(strlen($buffer) > 131072) throw new \RuntimeException('Evento TTS demasiado grande.');
+
+}
+
+throw new \RuntimeException('Streaming TTS incompleto.');
+
+}catch(\Throwable $e){
+
+return [
+'success' => false,
+'message' => 'No se pudo completar el streaming TTS.'
+];
+
+}finally{
+
+if($stream !== null) $stream->close();
+
+}
+
 }
 
 //FUNCTION - UPLOAD FILES TO S3
